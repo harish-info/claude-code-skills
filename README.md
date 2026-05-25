@@ -71,7 +71,3 @@ cp -r skills/ ~/.claude/skills/
 ```
 
 Then invoke with `/multi-agent-review` or `/debate <topic>` in Claude Code.
-
-## License
-
-MIT
