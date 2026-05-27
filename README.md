@@ -1,12 +1,73 @@
 # claude-code-skills
 
-Skills for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that orchestrate multiple AI agents (Claude, Codex, AGY) to work together on code review and technical decision-making.
+Skills for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that automate PR workflows and orchestrate multiple AI agents for code review and technical decision-making.
 
 ## What are Claude Code skills?
 
-Skills are markdown files that teach Claude Code new workflows. When you type a slash command like `/multi-agent-review`, Claude Code loads the skill and follows its instructions. These skills dispatch multiple AI agents in parallel and synthesize their outputs.
+Skills are markdown files that teach Claude Code new workflows. When you type a slash command like `/pr-babysit`, Claude Code loads the skill and follows its instructions.
 
 ## Skills
+
+### pr-babysit
+
+Automated PR babysitting. Monitors your open PRs, auto-fixes what it safely can (lint failures, test failures, merge conflicts, review comments), and reports what needs your attention.
+
+Each invocation runs a single one-shot pass. For continuous monitoring, pair it with `/loop`.
+
+```
+# one-shot: check current branch's PR
+/pr-babysit
+
+# one-shot: check a specific PR
+/pr-babysit https://github.com/owner/repo/pull/123
+
+# one-shot: sweep all your open PRs
+/pr-babysit --mine
+
+# classify only, no fixes
+/pr-babysit --dry-run
+
+# recurring: check every 15 minutes
+/loop 15m /pr-babysit https://github.com/owner/repo/pull/123
+
+# recurring: sweep all your PRs every 20 minutes
+/loop 20m /pr-babysit --mine
+```
+
+| Flag | Effect |
+|------|--------|
+| `<url>` | Target a specific PR |
+| `--mine` | Sweep all your open non-draft PRs |
+| `--dry-run` | Classify and report only, no fixes or pushes |
+| `--takeover` | Reclaim lock from another session |
+
+**Configuration:** place a `.claude/pr-babysit.yaml` in your repo root to define which CI failures are auto-fixable and what commands to run. See `skills/pr-babysit/references/config-example.yaml` for a full reference.
+
+What it auto-fixes:
+- Lint failures (on files in the PR diff)
+- Test failures (on files in the PR diff)
+- Merge conflicts (in configured safe paths like lockfiles)
+- Review comments (tagged with `@pr-babysit` or matching a narrow whitelist)
+
+What it reports but won't touch:
+- CI failures on files outside the PR diff
+- Ambiguous review comments
+- Build/infrastructure failures
+- Merge conflicts in non-safe paths
+
+### fix-pr-comments
+
+Fetches review comments from a GitHub PR, categorizes them by severity (High/Medium/Minor/Skip), presents them in a table, asks what to fix, then applies scoped fixes.
+
+```
+# fix comments on current branch's PR
+/fix-pr-comments
+
+# fix comments on a specific PR
+/fix-pr-comments https://github.com/owner/repo/pull/123
+```
+
+Works with GitHub.com and GitHub Enterprise. Also supports a headless `--auto` mode for programmatic callers like pr-babysit.
 
 ### multi-agent-review
 
@@ -56,7 +117,7 @@ Modes:
 | Codex | [Codex CLI plugin](https://github.com/openai/codex) | OpenAI's coding agent. Optional. |
 | AGY | [Antigravity CLI](https://www.antigravity.dev/) | Google's Gemini-powered agent. Optional. |
 
-Both skills degrade gracefully. Claude always runs. Codex and AGY are additive.
+multi-agent-review and debate degrade gracefully. Claude always runs. Codex and AGY are additive. pr-babysit and fix-pr-comments use Claude only.
 
 ## Installation
 
@@ -70,4 +131,4 @@ cp -r skills/ /path/to/your/project/.claude/skills/
 cp -r skills/ ~/.claude/skills/
 ```
 
-Then invoke with `/multi-agent-review` or `/debate <topic>` in Claude Code.
+Then invoke any skill with its slash command in Claude Code.
