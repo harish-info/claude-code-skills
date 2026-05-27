@@ -1,0 +1,45 @@
+# .claude/pr-babysit.yaml — place at the repo root of any repo PR Babysit should watch.
+# Every fix block is opt-in. Missing blocks mean that category escalates instead.
+#
+# Examples below are language-agnostic. Adapt commands to your build system:
+#   gradle:  "./gradlew lintDebug --continue"
+#   npm:     "npm run lint -- --fix"
+#   cargo:   "cargo clippy --fix --allow-dirty"
+
+fixes:
+  lint:
+    command: "./gradlew lintDebug --continue"    # or "npm run lint", "cargo clippy", etc.
+
+  unit_test:
+    command: "./gradlew :{{module}}:test --tests {{test_class}}.{{test_method}}"
+    # npm:  "npx jest {{test_file}} -t '{{test_method}}'"
+    # cargo: "cargo test {{test_method}} -- --exact"
+
+  snapshot:
+    auto_record: false                          # v1 default: OFF. Set true only after vetting.
+    record_command: "./gradlew :{{module}}:recordSnapshots"
+    # npm: "npx jest {{test_file}} -u"
+    snapshot_glob: "**/src/test/snapshots/**.png"
+
+  merge_conflict:
+    safe_paths:
+      - "**/*.lock"                             # lockfiles (package-lock.json, Cargo.lock, etc.)
+      - "**/generated/**"                       # generated code directories
+
+  comment_fix:
+    delegate_to_skill: "/fix-pr-comments"
+    trigger_mode: "explicit_tag"                # only act on @pr-babysit-tagged comments
+    # alternative: "narrow_whitelist" — act on a tight set of transforms (rename_local,
+    # remove_unused, formatting, api_swap) per the comment classification rules.
+
+scope:
+  generated_paths:
+    - "**/snapshots/**.png"
+    - "**/build/**"
+    - "**/dist/**"
+    - "**/node_modules/**"
+
+notifications:
+  global_budget_per_hour: 3
+  quiet_hours: "22:00-07:00"                    # local time; merge + skill errors bypass
+  per_item_backoff_minutes: [15, 60, 240]
