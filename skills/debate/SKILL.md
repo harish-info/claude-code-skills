@@ -1,6 +1,6 @@
 ---
 name: debate
-description: Multi-round structured debate between Claude, Codex, and AGY on a topic. Use when user wants to explore tradeoffs, compare approaches, stress-test ideas, or get adversarial perspectives on a technical decision. Invoked as /debate <topic>.
+description: Multi-round structured debate between Claude, Codex, and AGY. Use to explore tradeoffs, compare approaches, stress-test ideas, or get adversarial perspectives on a technical decision. Invoke /debate <topic>.
 tools: Bash, Read, Write, Agent, AskUserQuestion
 ---
 

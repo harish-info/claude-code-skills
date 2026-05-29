@@ -2,6 +2,7 @@
 name: multi-agent-review
 description: Three-agent code review where Claude (Tech Lead) adjudicates findings from Codex (Senior Dev) and AGY (Staff Engineer). Produces a single unified verdict with optional fix delegation. Works across any project.
 user_invocable: true
+tools: Bash, Read, Edit, Grep, Agent, AskUserQuestion
 ---
 
 # Review Board
