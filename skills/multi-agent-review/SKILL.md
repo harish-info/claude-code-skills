@@ -67,6 +67,8 @@ If the diff is empty (no output from `--shortstat`), stop and tell the user ther
 
 ## Phase 2: Detect available agents and dispatch in parallel
 
+> **READ-ONLY REVIEW MANDATE (applies to ALL three reviewer agents).** The review phase is strictly read-only. No reviewer agent — Claude Tech Lead, Codex, or AGY — may edit, create, delete, move, or stage any file, run any write/mutating command (no `git add`, `git commit`, `git restore`, `git checkout`, `git stash`, no `Edit`/`Write`, no formatters or codegen), or otherwise change the working tree. Reviewers ONLY read code and emit findings as text. Any fix happens later in Phase 5 and ONLY after the user explicitly chooses a fix option. If a reviewer modifies files anyway, treat its run as a violation: discard its file changes and keep only its textual findings.
+
 ### Agent detection
 
 Run these checks at startup (same as debate skill):
@@ -97,6 +99,12 @@ Launch all simultaneously using `run_in_background: true`. All MUST be dispatche
 
 ```
 You are a Tech Lead reviewing branch changes.
+
+READ-ONLY: This is a review, not a fix. Do NOT edit, create, delete, or stage
+any file. Do NOT run git add/commit/restore/checkout/stash or any mutating
+command. Use only read commands (git diff, git log, cat, grep) and the Read
+tool. Output findings as text only — never touch the working tree.
+
 Run `git diff {BASE_BRANCH}...HEAD` and read any files needed for full context.
 Read CLAUDE.md (if it exists) for project standards and conventions.
 
@@ -125,7 +133,7 @@ node "$CODEX_ROOT/scripts/codex-companion.mjs" review --base {BASE_BRANCH} --wai
 node "$CODEX_ROOT/scripts/codex-companion.mjs" adversarial-review --base {BASE_BRANCH} --wait
 ```
 
-The `--wait` flag tells the companion to run synchronously and return output to stdout.
+The `--wait` flag tells the companion to run synchronously and return output to stdout. The `review` / `adversarial-review` commands are read-only by design — they emit findings only. If Codex returns any file modifications, treat it as a violation: discard the changes (`git restore`) and keep only the textual findings.
 
 ### Agent 3: AGY (Staff Engineer) — Bash tool, background
 
@@ -143,6 +151,12 @@ fi
 
 # Pass diff inline via -p, use --print-timeout (NOT --sandbox or --dangerously-skip-permissions)
 agy --print-timeout 10m -p "You are a Staff Engineer reviewing branch changes.
+
+READ-ONLY: This is a review, not a fix. Do NOT edit, create, delete, move, or
+stage any file. Do NOT run git add/commit/restore/checkout/stash or any command
+that changes the working tree. Do NOT run formatters, codegen, or build tasks
+that write files. You are given the full diff inline below — review it as text
+and respond with findings ONLY. Do not attempt to open, write, or modify files.
 
 Here is the diff to review:
 
@@ -225,6 +239,19 @@ fi
 If AGY returns a 503, timeout, or error, mark it as unavailable and continue. No retry — AGY is additive, not required.
 
 Only after ALL dispatched agents have completed (or been marked unavailable) should you proceed to Phase 4.
+
+### Working-tree integrity check (mandatory before Phase 4)
+
+Reviewers are read-only (see the READ-ONLY REVIEW MANDATE in Phase 2). Before adjudicating, confirm none of them touched the working tree:
+
+```bash
+git status --porcelain
+```
+
+If this shows changes that you did NOT make yourself before the review (i.e., a reviewer agent edited, created, or staged files), a reviewer violated the read-only mandate. Do the following:
+1. Tell the user exactly which files a reviewer modified.
+2. Restore them: `git restore --staged --worktree <files>` (and `rm` any new untracked files the reviewer created). Never discard the user's own pre-existing changes — only revert what a reviewer introduced during this run.
+3. Continue adjudication using the reviewer's textual findings only.
 
 ---
 
