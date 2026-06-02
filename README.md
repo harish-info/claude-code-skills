@@ -111,7 +111,7 @@ Modes:
 
 ### gaslight
 
-A hard adversarial re-check of work you just finished. It flips the agent out of generation mode (which satisfices and stops at "good enough") into verification mode by treating the just-completed work as if it contains at least one real bug. A hard boundary prevents the pressure from backfiring: the agent may only report or fix issues it can prove with evidence — inventing a bug or "fixing" working code is explicitly disallowed.
+A hard adversarial re-check of work you just finished. Agents tend to perform better when you "gaslight" them — insisting their finished work is wrong pushes them out of generation mode (which satisfices and stops at "good enough") and into an adversarial exploration/verification phase, where they hunt for problems instead of defending their output. This skill weaponizes that effect deliberately by treating the just-completed work as if it contains at least one real bug. A hard boundary prevents the pressure from backfiring: the agent may only report or fix issues it can prove with evidence — inventing a bug or "fixing" working code is explicitly disallowed.
 
 ```
 /gaslight
