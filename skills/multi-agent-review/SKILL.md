@@ -327,18 +327,12 @@ Options (in this order):
 
 (Do not offer fix options for Improvement/Nit-only results.)
 
-### Option 1: Claude fixes
+### Fix Results format
 
-Apply fixes directly in the main conversation using the Edit tool. For each blocking finding:
-
-1. Read the file for full context around the finding
-2. Apply the smallest safe patch — do not refactor surrounding code
-3. Follow CLAUDE.md standards (MVVM, Coroutines, Koin, Arrow Either)
-
-After all fixes are applied, present a summary:
+After applying fixes (Options 1–3), present this table — substitute `<agent>` with whichever agent ran (Claude / Codex / AGY):
 
 ```markdown
-### Fix Results (Claude)
+### Fix Results (<agent>)
 
 | # | Finding | Status | Detail |
 |---|---------|--------|--------|
@@ -346,6 +340,17 @@ After all fixes are applied, present a summary:
 | 3 | Title | ⚠️ Partial | What was done, what remains |
 | 5 | Title | ❌ Skipped | Why it couldn't be auto-fixed |
 ```
+
+### Option 1: Claude fixes
+
+Apply fixes directly in the main conversation using the Edit tool. For each blocking finding:
+
+1. Read the file for full context around the finding
+2. Apply the smallest safe patch — do not refactor surrounding code
+3. Follow CLAUDE.md standards (MVVM, Coroutines, Koin, Arrow Either)
+4. After applying each fix, re-read your own change and confirm it actually resolves the finding without altering unrelated behavior. Do not declare a fix done until you've verified the diff against the finding.
+
+After all fixes are applied, present the **Fix Results format** table titled `Fix Results (Claude)`.
 
 ### Option 2: Codex fixes
 
@@ -374,19 +379,13 @@ make correct judgment calls on ambiguous fixes.}
 
 Apply the smallest safe patch for each. Do not refactor surrounding code.
 Follow CLAUDE.md project standards if present.
+
+After applying each fix, re-read your own change and confirm it actually resolves
+the finding without altering unrelated behavior. Do not declare a fix done until
+you've verified the diff against the finding.
 ```
 
-After Codex returns, present a summary:
-
-```markdown
-### Fix Results (Codex)
-
-| # | Finding | Status | Detail |
-|---|---------|--------|--------|
-| 1 | Title | ✅ Fixed | Brief description of the change |
-| 3 | Title | ⚠️ Partial | What was done, what remains |
-| 5 | Title | ❌ Skipped | Why it couldn't be auto-fixed |
-```
+After Codex returns, present the **Fix Results format** table titled `Fix Results (Codex)`.
 
 ### Option 3: AGY fixes
 
@@ -413,6 +412,10 @@ with code quotes, reasoning, and severity calls.}
 
 Apply the smallest safe patch for each. Do not refactor surrounding code.
 Read CLAUDE.md for project standards if present.
+
+After applying each fix, re-read your own change and confirm it actually resolves
+the finding without altering unrelated behavior. Do not declare a fix done until
+you've verified the diff against the finding.
 PROMPT
 
 agy --print-timeout 10m -p "$(cat /tmp/review-agy-fix.txt)"
@@ -420,17 +423,7 @@ agy --print-timeout 10m -p "$(cat /tmp/review-agy-fix.txt)"
 
 Note: Do NOT use `--sandbox` or `--dangerously-skip-permissions` — both break AGY's `--print-timeout` mechanism, causing indefinite hangs. Use bare `-p` with `--print-timeout` instead.
 
-After AGY returns, present a summary:
-
-```markdown
-### Fix Results (AGY)
-
-| # | Finding | Status | Detail |
-|---|---------|--------|--------|
-| 1 | Title | ✅ Fixed | Brief description of the change |
-| 3 | Title | ⚠️ Partial | What was done, what remains |
-| 5 | Title | ❌ Skipped | Why it couldn't be auto-fixed |
-```
+After AGY returns, present the **Fix Results format** table titled `Fix Results (AGY)`.
 
 ### Option 4: Post as PR review
 
