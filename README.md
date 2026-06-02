@@ -109,6 +109,16 @@ Modes:
 - **Quick (1 round)** - all agents argue once, immediate synthesis
 - **Standard (3 rounds)** - opening positions, rebuttals, closing arguments
 
+### gaslight
+
+A hard adversarial re-check of work you just finished. It flips the agent out of generation mode (which satisfices and stops at "good enough") into verification mode by treating the just-completed work as if it contains at least one real bug. A hard boundary prevents the pressure from backfiring: the agent may only report or fix issues it can prove with evidence — inventing a bug or "fixing" working code is explicitly disallowed.
+
+```
+/gaslight
+```
+
+Use it right after declaring a feature or fix done, to surface edge cases, error paths, and wrong assumptions the first pass missed. If a rigorous pass finds nothing, the correct answer is "no bug found" with proof — it will not manufacture one.
+
 ## Agents
 
 | Agent | Runtime | Role |
