@@ -1,272 +1,77 @@
 ---
 name: pr-babysit
-description: Babysits open GitHub PRs. One-shot pass that auto-fixes CI failures (lint, tests, merge conflicts) and review comments, then reports what it can't fix. Run via /loop for recurring checks. Invocations - /pr-babysit, /pr-babysit <url>, /pr-babysit --mine, /pr-babysit --dry-run, /pr-babysit --takeover.
+description: Runs one babysitting pass on an open GitHub PR — syncs, fixes what is safe (CI, simple review comments, merge conflicts), escalates the rest, exits clean on merge/close. For recurrence use Claude's /loop (e.g. /loop 15m /pr-babysit <url>). Invoke /pr-babysit [<url>|--mine|--dry-run].
 user_invocable: true
+tools: Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion
 ---
 
 # PR Babysit
 
-Runs one PR babysitting pass for a PR (or all your open PRs) -- fixes what it safely can, reports what it can't, and exits cleanly on merge/close.
-
-For recurring babysitting, use Claude Code's `/loop` command (e.g., `/loop 15m /pr-babysit <url>`).
+Runs **one** pass over a PR: sync the branch, fix what can be fixed safely, escalate the
+rest, and exit cleanly when the PR is merged or closed. One pass only — no built-in loop.
 
 ## Invocation
 
 | Form | Behavior |
 |------|----------|
-| `/pr-babysit` | One-shot pass for current branch PR |
-| `/pr-babysit <url>` | One-shot pass for specific PR (includes drafts) |
-| `/pr-babysit --mine` | One-shot sweep for all your open non-draft PRs |
-| `/pr-babysit --dry-run` | Classify only, no fixes or push |
-| `/pr-babysit --takeover` | Forces lock reclaim if another session holds it |
+| `/pr-babysit` | One pass for the current branch's PR |
+| `/pr-babysit <url>` | One pass for a specific PR (incl. drafts) |
+| `/pr-babysit --mine` | One pass over each of your open non-draft PRs |
+| `/pr-babysit --dry-run` | Read-only: classify and print the worklist, no fixes/commits/push |
 
-Every invocation runs one pass. `--dry-run` is read-only: it classifies and prints the worklist without fixes, commits, or push.
+## Recurrence (use Claude's /loop)
 
-## One-shot body
+There is no `--watch`. To babysit on an interval, wrap this skill with the built-in `/loop`:
 
-Each invocation executes one pass. The skill body is intentionally re-entrant -- every pass re-derives state from GitHub.
-
-### Step 0 -- Resolve PR(s) and acquire lock
-
-Parse args:
-
-- No args: `gh pr view --json url,number,headRefOid,...` to resolve current branch's PR. Exit with "no PR found" if absent.
-- `--mine`: `gh pr list --author @me --state open --draft=false --json url,number`. Exit with "no PRs to babysit" if empty.
-- `<url>`: parse owner/repo/pr-number. `gh pr view <url> --json ...`.
-- `--takeover`: same as default but pass takeover=true to lock acquisition.
-- `--dry-run`: skip Steps 5-6 (no fixes, no reporting). Print the worklist after Step 4 and proceed to Step 7 state/heartbeat only.
-
-For each PR to process, acquire the lock:
-
-```python
-import sys, os
-skill_dir = os.path.dirname(os.path.abspath("__file__"))  # resolve relative to skill
-sys.path.insert(0, os.path.join(skill_dir, "bin"))
-import pr_babysit_lock as L
-result = L.acquire(owner, repo, pr_number, session_id, schedule_seconds=900, takeover=False)
-# Returns: "acquired" | "blocked_other_session" | "blocked_overrun" | "blocked_race"
+```
+/loop 15m /pr-babysit https://github.com/org/repo/pull/123
 ```
 
-Lock outcomes:
-- `acquired` -> proceed with this PR
-- `blocked_other_session` -> skip this PR, print session log line, continue with next (or exit if single PR)
-- `blocked_overrun` -> skip this PR, print "prior pass still running"
-- `blocked_race` -> skip this PR, print "metadata race -- try again later"
+`/loop` is session-scoped and stops when you stop it or end the session — that is the
+intended bound. Set the interval to taste.
 
-State directory: `~/.cache/pr-babysit/` (locks and per-PR state files live here).
+## One pass
 
-### Step 1 -- Resolve PR head remote + workspace sync
+1. **Resolve the PR.** From the arg, current branch (`gh pr view --json ...`), or `--mine`
+   (`gh pr list --author @me --state open`). For enterprise hosts pass `--hostname` / set
+   `GH_HOST` (gh defaults to github.com and silently 404s otherwise).
+2. **Sync.** `git fetch` the PR head; if it advanced since your last local state, re-read the
+   diff before doing anything. Never act on a stale checkout.
+3. **Gather state** in parallel: `gh pr checks`, reviews, and inline review comments
+   (`gh api --paginate`). Note `mergeStateStatus` for conflicts.
+4. **Build the worklist** — classify each item as *fixable* or *escalate* (see policy below).
+5. **Fix sequentially, fail-fast.** After each fix: re-run the relevant check/build locally,
+   confirm the change stays in scope (only touches files already in the PR diff, or generated
+   paths), commit, and push. On a non-fast-forward push, rebase on the latest head and retry
+   once; if it still races, stop and escalate.
+6. **Escalate** anything not safely fixable: leave a concise note (PR comment or your output)
+   describing what is blocked and why. Don't guess at intent.
+7. **Exit.** If the PR is merged or closed, say so and stop. Otherwise report what was fixed,
+   what was pushed, and what was escalated.
 
-```bash
-PR_META=$(gh pr view <url> --json headRefOid,headRefName,headRepositoryOwner,headRepository)
-HEAD_REMOTE="origin"   # add fork as remote if owner differs
-HEAD_BRANCH=$(echo "$PR_META" | jq -r .headRefName)
-CURRENT_HEAD_SHA=$(echo "$PR_META" | jq -r .headRefOid)
+## Fix policy
 
-git fetch "$HEAD_REMOTE" "$HEAD_BRANCH"
-```
+**Safe to auto-fix** (only when the failure/comment maps cleanly onto files already in the diff):
+- Formatting / lint autofixes (e.g. detekt, ktlint, prettier) — apply the tool's own fix.
+- Snapshot/golden updates (e.g. paparazzi) when the diff explains the change.
+- Unit test breakages with an obvious, in-scope cause.
+- Merge conflicts that resolve mechanically and stay scoped to the PR's own changes.
+- Review comments that are explicit, single-file, small (≤ ~10 lines), and unambiguous.
 
-### Step 2 -- First-fire init OR head-change detection
+**Always escalate** (never auto-fix):
+- Build failures, unfamiliar CI failures, anything needing design judgment.
+- Comments that ask a question, span multiple files, or are ambiguous.
+- Any fix that would touch files outside the PR diff.
+- Conflicts that require understanding intent to resolve.
 
-Load state via `pr_babysit_state`. If `state.head_sha == None`, this is the first fire:
+## Guardrails
 
-```bash
-PR_DIFF_FILES=$(gh pr diff --name-only <url>)
-BASE_SHA=$(gh pr view <url> --json baseRefOid -q .baseRefOid)
-git reset --hard "$HEAD_REMOTE/$HEAD_BRANCH"
-```
-
-Else detect head change via `pr_babysit_git.detect_head_change`:
-
-```python
-import pr_babysit_git as G
-kind = G.detect_head_change(repo_root, state.head_sha, current_head_sha)
-# Returns None | "fast_forward" | "rewrite"
-```
-
-If kind is non-None:
-- Sync workspace: `G.sync_workspace(repo_root, head_remote, head_branch)`
-- Re-snapshot `pr_diff_files` and `base_sha` regardless of kind
-- If kind == "rewrite": clear `state.handled_comment_ids`, filter `state.audit` to 24h, print "force-push detected on PR #<n>, state partially reset"
-
-### Step 3 -- Fetch PR state in parallel
-
-```bash
-CHECKS_JSON=$(gh pr checks <url> --json name,status,conclusion)
-PR_VIEW=$(gh pr view <url> --json mergeStateStatus,reviewDecision,statusCheckRollup)
-COMMENTS=$(gh api "/repos/<owner>/<repo>/pulls/<n>/comments")
-REVIEWS=$(gh api "/repos/<owner>/<repo>/pulls/<n>/reviews")
-```
-
-If PR is merged or closed -> cleanup and exit:
-
-```python
-S.delete_state(owner, repo, pr_number)
-L.release(owner, repo, pr_number)
-print(f"PR #{pr_number} merged/closed, exiting")
-```
-
-### Step 4 -- Build worklist
-
-For each failing check from `CHECKS_JSON`, categorize by name using patterns from `.claude/pr-babysit.yaml`:
-
-- Checks matching `lint.pattern` -> lint
-- Checks matching `test.pattern` -> test
-- Checks matching `snapshot.pattern` -> snapshot
-- Everything else -> other (report only)
-
-For each, call `pr_babysit_classify.classify_ci_failure(...)`. Returns a `Decision` with `decision` ("fix"|"escalate") and `reason`.
-
-For comments, filter to new since `state.last_fire` AND not in `state.handled_comment_ids`:
-
-```python
-import pr_babysit_classify as C
-import pr_babysit_notify as N
-
-for comment in new_comments:
-    thread_id = comment["pull_request_review_id"] or comment["in_reply_to_id"]
-    if N.is_in_cooldown(state.audit, thread_id):
-        continue
-    decision = C.classify_comment(
-        comment_body=comment["body"],
-        on_diff_line=comment.get("line") is not None,
-        is_bot=comment["user"]["type"] == "Bot",
-        config=config["fixes"]["comment_fix"],
-    )
-```
-
-Check merge conflict: `if mergeStateStatus == "DIRTY"`, add to worklist with type "merge_conflict". Defer file enumeration to Step 5's actual `git merge --no-commit` probe.
-
-If `--dry-run`, print the worklist as a markdown table and skip to Step 7.
-
-### Step 5 -- Act on fixable items (sequentially, fail-fast)
-
-For each item with decision == "fix":
-
-```bash
-# Assert clean worktree
-if [ -n "$(git status --porcelain)" ]; then
-  echo "ERROR: dirty worktree before fix on PR #<n>"
-  exit 1
-fi
-
-PRE_FIX_SHA=$(git rev-parse HEAD)
-```
-
-Apply the fix based on item type using commands from `.claude/pr-babysit.yaml`:
-
-- **lint**: run the configured lint command. Stage and commit changed files.
-- **snapshot**: run the configured record command with template substitution. Verify snapshot membership in `pr_diff_files`. Commit.
-- **test**: re-run failing test to reproduce. If reproduced, attempt minimal fix. Re-run. Commit only if green.
-- **merge_conflict**: `git fetch origin <base>`, `git merge origin/<base> --no-commit`. If all conflicts are in `safe_paths` -> resolve mechanically, commit. Else `git merge --abort`, report.
-- **comment_fix**: delegate to `/fix-pr-comments --auto --comment-ids <id> --transform <type>`.
-
-Then validate:
-
-```python
-validation_passed = run_check_locally(item)
-if not validation_passed:
-    subprocess.run(["git", "reset", "--hard", pre_fix_sha], cwd=repo)
-    report(item, "fix failed validation")
-    continue
-```
-
-Scope check (ensures fixes only touch files already in the PR diff, plus configured generated paths):
-
-```python
-import pr_babysit_git as G
-if G.is_merge_commit(repo, "HEAD"):
-    resolved = G.get_resolved_conflict_files(repo)
-    ok, off = G.merge_scope_check(repo, pre_fix_sha, state.pr_diff_files,
-                                  config["fixes"]["merge_conflict"]["safe_paths"],
-                                  base_branch, resolved)
-else:
-    ok, off = G.scope_check(repo, pre_fix_sha, state.pr_diff_files,
-                            config["scope"]["generated_paths"])
-if not ok:
-    subprocess.run(["git", "reset", "--hard", pre_fix_sha], cwd=repo)
-    report(item, f"fix touched out-of-scope files: {off}")
-    continue
-```
-
-Push (with non-FF retry):
-
-```bash
-if ! git push 2>/tmp/push-err; then
-  if grep -q "non-fast-forward\|rejected" /tmp/push-err; then
-    git fetch "$HEAD_REMOTE" "$HEAD_BRANCH"
-    if ! git rebase "$HEAD_REMOTE/$HEAD_BRANCH"; then
-      git rebase --abort && git reset --hard "$PRE_FIX_SHA"
-      # report and continue
-    fi
-    git push || { git reset --hard "$PRE_FIX_SHA"; # report and continue; }
-  fi
-fi
-```
-
-Record success in audit:
-
-```python
-state["audit"].append({
-    "comment_id": item.comment_id,
-    "comment_thread_id": item.thread_id,
-    "reviewer": item.reviewer,
-    "classification": item.classification,
-    "commit_sha": git_rev_parse_HEAD(),
-    "fix_pushed_at": now_iso,
-    "in_cooldown_until": None,
-})
-state["handled_comment_ids"].append(item.comment_id)
-```
-
-### Step 6 -- Report unfixable items
-
-Print a summary of items that could not be auto-fixed:
-
-```python
-key = N.escalation_key(kind=item.kind, name=item.name)
-
-if item.thread_id and N.is_in_cooldown(state.audit, item.thread_id):
-    print(f"[session-log] {key} in cooldown, suppressing")
-    continue
-
-if not N.backoff_due(state, key, config["notifications"]["per_item_backoff_minutes"]):
-    print(f"[session-log] {key} backoff window not elapsed")
-    continue
-
-print(f"NEEDS ATTENTION: {key} -- {reason}")
-N.macos_notify(title="PR Babysit", message=f"{key}: {reason}")
-N.record_escalation(state, key, reason)
-```
-
-Notifications are printed to the conversation. On macOS, a native notification is also sent via `osascript`.
-
-### Step 7 -- Heartbeat + state update
-
-```python
-L.heartbeat(owner, repo, pr_number)
-S.save_state(owner, repo, pr_number, state)
-L.release(owner, repo, pr_number)
-```
-
-Print a concise completion line with the PR number, fixed count, reported count, and whether the PR remains open.
-
-### Exit paths
-
-| Trigger | Cleanup |
-|---|---|
-| PR merged | delete state + release lock + exit |
-| PR closed | same |
-| Skill error | release lock + exit |
-
-## Configuration
-
-Place `.claude/pr-babysit.yaml` at the repo root. Every fix block is opt-in -- missing blocks mean that category is reported but not auto-fixed.
-
-See `references/config-example.yaml` for a full reference.
-
-## References
-
-- `references/classify-comment.md` -- comment classification rules
-- `references/fix-policy.md` -- in-scope vs report decision tree
-- `references/config-example.yaml` -- reference `.claude/pr-babysit.yaml`
+- **Scope check** every fix: changed files must already be in the PR diff (or be generated
+  output of a diffed source). If a fix wants to wander, escalate instead.
+- **Validate before push**: re-run the check the fix targets; a fix that doesn't go green is
+  not a fix.
+- **Re-sync before push**: always push onto the current remote head.
+- **No loops, no thrash**: one pass. If you already pushed a fix for an item this pass, don't
+  re-fix it. Recurrence is `/loop`'s job, not this skill's.
+- **Confirm before merging**: this skill does not auto-merge. If a PR looks merge-ready, say so
+  and let the operator (or a reviewer) merge.

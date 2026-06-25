@@ -39,9 +39,6 @@ Each invocation runs a single one-shot pass. For continuous monitoring, pair it 
 | `<url>` | Target a specific PR |
 | `--mine` | Sweep all your open non-draft PRs |
 | `--dry-run` | Classify and report only, no fixes or pushes |
-| `--takeover` | Reclaim lock from another session |
-
-**Configuration:** place a `.claude/pr-babysit.yaml` in your repo root to define which CI failures are auto-fixable and what commands to run. See `skills/pr-babysit/references/config-example.yaml` for a full reference.
 
 What it auto-fixes:
 - Lint failures (on files in the PR diff)
