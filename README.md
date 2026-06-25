@@ -40,17 +40,19 @@ Each invocation runs a single one-shot pass. For continuous monitoring, pair it 
 | `--mine` | Sweep all your open non-draft PRs |
 | `--dry-run` | Classify and report only, no fixes or pushes |
 
-What it auto-fixes:
-- Lint failures (on files in the PR diff)
-- Test failures (on files in the PR diff)
-- Merge conflicts (in configured safe paths like lockfiles)
-- Review comments (tagged with `@pr-babysit` or matching a narrow whitelist)
+What it auto-fixes (only when the fix maps cleanly onto files already in the PR diff):
+- Lint/formatting failures (applies the tool's own autofix)
+- Snapshot/golden updates the diff explains
+- Test failures with an obvious, in-scope cause
+- Merge conflicts that resolve mechanically and stay scoped to the PR's own changes
+- Review comments that are explicit, single-file, small, and unambiguous
 
 What it reports but won't touch:
 - CI failures on files outside the PR diff
-- Ambiguous review comments
-- Build/infrastructure failures
-- Merge conflicts in non-safe paths
+- Build/infrastructure failures or unfamiliar CI failures
+- Comments that ask a question, span multiple files, or are ambiguous
+- Any fix that would wander outside the PR diff
+- Conflicts that need intent to resolve
 
 ### fix-pr-comments
 
