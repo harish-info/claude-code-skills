@@ -1,386 +1,193 @@
 ---
 name: debate
-description: Multi-round structured debate between Claude, Codex, and AGY. Use to explore tradeoffs, compare approaches, stress-test ideas, or get adversarial perspectives on a technical decision. Invoke /debate <topic>.
+description: Runs a multi-round structured debate between Claude, Codex, and AGY on a technical question, then synthesizes a verdict. Use to explore tradeoffs, compare approaches, stress-test a decision, or get adversarial perspectives. Invoke as /debate <topic> under Claude Code or $debate <topic> under Codex.
+user_invocable: true
 tools: Bash, Read, Write, Agent, AskUserQuestion
 ---
 
 # Debate
 
-Orchestrate a structured debate between up to three independent LLM agents (Claude, Codex, AGY) on a user-provided topic. Each model argues independently, responds to each other, then the orchestrator synthesizes a verdict.
+Up to three independent agents argue a topic, respond to each other, then the host agent synthesizes a verdict.
 
 ## Argument parsing
 
-Raw arguments: `$ARGUMENTS`
+Take the arguments from whichever form the host used: Claude Code expands
+`$ARGUMENTS` from `/debate <topic>`; Codex invokes the skill as `$debate <topic>`
+and substitutes nothing, so read the topic from the request that triggered the
+skill. Never treat a literal `$ARGUMENTS` as the topic — that means the host did
+not expand it.
 
-Parse:
 - `--adversarial` — assign explicit for/against/alternative positions instead of exploratory
-- `--rounds N` — override round count (1-5), skips mode selection prompt. 1 = Quick, 3 = Standard, other values use Standard flow with adjusted round count
-- Everything else is the debate topic
+- `--rounds N` — round count (1-5), skips the mode prompt. 1 = Quick, 3 = Standard, other values use the Standard flow with an adjusted round count
+- Everything else is the topic
 
-If no topic is provided, ask the user what they want to debate.
+If no topic is given, ask what to debate.
 
-## Agent detection
+## Roster
 
-Run these checks in parallel at startup:
-
-**Claude** — always available (Agent tool).
-
-**Codex:**
 ```bash
-CODEX_ROOT="$(find ~/.claude/plugins/cache/openai-codex -name codex-companion.mjs -path '*/scripts/*' 2>/dev/null | head -1 | xargs dirname | xargs dirname)"
+ROSTER=$(ls ~/.claude/skills/.shared/agent-roster.sh ~/.codex/skills/.shared/agent-roster.sh 2>/dev/null | head -1)
+[ -n "$ROSTER" ] || { echo "roster helper not found"; exit 1; }
+eval "$($ROSTER)"
+echo "Host: $HOST | Peers: $PEERS"
+echo "CLAUDE_CMD=$CLAUDE_CMD | CODEX_CMD=$CODEX_CMD | AGY_CMD=$AGY_CMD"
 ```
-Available if `CODEX_ROOT` is non-empty.
 
-**AGY:**
+Shell state does not survive between tool calls: re-run these lines at the top of
+every later snippet that uses a `firefly_*` wrapper. Host-native subagents do
+not use these shell wrappers; Claude and Codex each use their installed host.
+
+The roster is optimistic — it checks that each agent is installed, not that it
+answers. An agent named here can still fail at dispatch; drop it to unavailable
+and re-check the agent count before Round 1 rather than assuming the announced
+roster holds.
+
+The host debates as itself and also acts as orchestrator and synthesizer. Announce the roster (`"Debate agents: Claude, Codex, AGY"`). Minimum 2 agents; if only the host is available, use the self-debate fallback below.
+
+| Debater | How to dispatch |
+|---------|-----------------|
+| Host = Claude Code | `Agent` tool, so the arguing context stays separate from the synthesizing one |
+| Host = Codex | Argue inline in the current session |
+| Peer Claude | `firefly_claude "$(cat /tmp/debate-claude-r<N>.txt)"` |
+| Peer Codex | `(unset CLAUDECODE; firefly_codex task --prompt-file /tmp/debate-codex-r<N>.txt --effort medium)` (companion) or `(unset CLAUDECODE; firefly_codex --sandbox read-only - < /tmp/debate-codex-r<N>.txt)` (`codex exec`) |
+| Peer AGY | `firefly_agy 10m -p "$(cat /tmp/debate-agy-r<N>.txt)"` |
+
+Strip `CLAUDECODE` when launching Codex: Claude Code exports it, children inherit
+it, and a Codex peer that sees it resolves its own host as Claude.
+
+Write every peer's prompt to its own file first, with a **quoted** heredoc
+delimiter. Debate prompts embed the user's topic and the brief — backticks, `$`,
+and code snippets are routine. An unquoted delimiter runs command substitution as
+the file is written; a prompt typed onto the command line runs it at dispatch:
+
 ```bash
-# Kill stale AGY processes from previous sessions before detection
-pkill -f "agy.*(--sandbox|--print).*/tmp/debate-agy" 2>/dev/null || true
-which agy 2>/dev/null && agy --print-timeout 30s -p "respond with only the word READY" 2>&1 | grep -qi "ready"
+cat > /tmp/debate-codex-r1.txt << 'PROMPT'
+<the round prompt, verbatim>
+PROMPT
 ```
-Available if the grep succeeds. AGY runs via `agy -p "prompt"` in headless mode. Do NOT use `--sandbox` or `--dangerously-skip-permissions` as both break AGY's `--print-timeout` mechanism, causing indefinite hangs. Use bare `-p` with `--print-timeout` instead.
 
-Announce the roster: `"Debate agents: Claude, Codex, AGY"` or list whichever are available. Minimum 2 agents required. If only Claude is available, use Claude-vs-Claude with opposing personas (see Fallback section).
+One file per agent per round, so a later round never clobbers a file still being
+read. Clean them up after the synthesis.
+
+This is read-only argumentation: pass `--sandbox read-only` to `codex exec` and
+never `--write`. Never pass `--sandbox`/`--dangerously-skip-permissions` to AGY —
+both break its `--print-timeout` and it hangs forever.
 
 ## Mode selection
 
-If `--rounds N` was passed, skip this step and use N rounds.
+If `--rounds N` was passed, use N rounds. Otherwise ask (`AskUserQuestion` under Claude Code, a plain numbered question under Codex):
 
-Otherwise, ask the user:
-
-```
-AskUserQuestion({
-  questions: [{
-    question: "What kind of debate do you want?",
-    header: "Mode",
-    options: [
-      { label: "Quick (1 round)", description: "All agents argue once, immediate synthesis. Good for simple topics or fast signal." },
-      { label: "Standard (3 rounds)", description: "Opening positions, rebuttals, closing arguments + synthesis. Better for complex or high-stakes topics." }
-    ],
-    multiSelect: false
-  }]
-})
-```
-
-Map: Quick → 1 round. Standard → 3 rounds.
+1. **Quick (1 round)** — all agents argue once, immediate synthesis. Good for simple topics or fast signal.
+2. **Standard (3 rounds)** — opening, rebuttals, closing, then synthesis. Better for complex or high-stakes topics.
 
 ## Context gathering
 
-Build a **debate brief** based on topic type. All agents receive the same brief for fairness and to ensure they start from the same baseline (all three can independently explore the repo for additional context).
+Build a **debate brief** that every agent receives, so all start from the same baseline. Detect the topic type:
 
-### Detection heuristics and context rules
+| Topic contains | Gather | Cap |
+|----------------|--------|-----|
+| "branch", "changes", "diff", "PR", "commit" | Branch name, `git log main..HEAD --oneline`, `git diff main..HEAD --stat`, key file diffs. Summarize intent in 1-2 sentences. | 800 diff lines |
+| "plan", "spec", "design", or a `.md` path | Read the document; extract key decisions, constraints, open questions. | 1000 words |
+| Specific files, functions, or modules | Read them; summarize surrounding architecture in 2-3 sentences plus relevant snippets. | 500 code lines |
+| None of the above | Use the topic text as-is. If it clearly relates to the current repo, name a few relevant paths with a one-line summary — do not dump file contents. | — |
 
-**Branch context** — topic contains "branch", "changes", "diff", "PR", or "commit":
-```bash
-# Gather in parallel
-git log main..HEAD --oneline
-git diff main..HEAD --stat
-git diff main..HEAD -- <key files only, cap at 800 lines total>
-```
-Include: branch name, commit list, diff stat, key diffs. Summarize intent in 1-2 sentences.
+Store this as `DEBATE_BRIEF` and inject it into every prompt.
 
-**Plan/Spec context** — topic contains "plan", "spec", "design", or references a `.md` file:
-Read the referenced document. Extract the key decisions, constraints, and open questions. Cap at 1000 words.
+## The debate prompt
 
-**Code context** — topic references specific files, functions, or modules:
-Read those files. Summarize the surrounding architecture in 2-3 sentences. Include relevant code snippets (cap 500 lines).
-
-**Idea/General** — none of the above:
-Use the topic text as-is. If the topic clearly relates to the current repo, briefly identify relevant files/context (a few paths and a one-line summary — do not dump file contents).
-
-Store the gathered context as `DEBATE_BRIEF`. This gets injected into every agent prompt.
-
-## Prompt rules
-
-Every agent prompt (opening, rebuttal, closing) includes these instructions:
+One template covers every agent and every round. Fill the slots; nothing else changes between agents.
 
 ```
+You are participating in a structured debate as {AGENT_NAME}.
+
+{POSITION_INSTRUCTION}
+
+Topic: {topic}
+
+{DEBATE_BRIEF}
+
+{ROUND_BLOCK}
+
 RULES:
 - Start with your thesis in the first sentence. No preamble.
 - Cite specific evidence from the context — files, decisions, constraints, code.
 - Do not concede unless you genuinely cannot counter the argument.
 - Reference concrete details, not abstract principles.
 - No conversational filler ("great question", "I appreciate", "my colleague").
+
+Word limit: {LIMIT} words.
 ```
 
-### Word limits (scale with context type)
+### `{ROUND_BLOCK}` per round
+
+| Round | Block |
+|-------|-------|
+| 1 — Opening | *(empty)* |
+| 2 — Rebuttal | `Your Round 1 position:`<br>`{own_r1}`<br><br>`Opponent positions:`<br>`{each opponent}: {their_r1}`<br><br>`Respond to the strongest opposing argument. Concede only what you must. Strengthen your remaining points. Identify where you converge or diverge.` |
+| 3 — Closing | `Your Round 2 rebuttal:`<br>`{own_r2}`<br><br>`All Round 2 rebuttals:`<br>`{each opponent}: {their_r2}`<br><br>`This is the final round. State your final position. Acknowledge valid points your opponents made. Identify the key remaining disagreement. What should the user actually do?` |
+
+### `{LIMIT}` per round
 
 | Context type | Opening | Rebuttal | Closing |
-|-------------|---------|----------|---------|
+|--------------|---------|----------|---------|
 | Idea/General | 300 | 250 | 200 |
 | Branch/Plan/Code | 450 | 300 | 250 |
 
-### Position assignment
+### `{POSITION_INSTRUCTION}`
 
-**Exploratory mode** (default): each agent argues their genuine recommendation.
-Add to prompt: `"Take your honest position on this topic. Do not hedge or try to be balanced — that is the synthesizer's job."`
+**Exploratory** (default): `Take your honest position on this topic. Do not hedge or try to be balanced — that is the synthesizer's job.`
 
-**Adversarial mode** (`--adversarial`): assign positions randomly across available agents.
-- 3 agents: one argues FOR, one argues AGAINST, one argues for a THIRD ALTERNATIVE
-- 2 agents: one argues FOR, one argues AGAINST
-
-Add to prompt: `"You have been assigned a position: [POSITION]. Argue this position as strongly as possible, even if you personally disagree. Find the strongest possible case for this side."`
+**Adversarial** (`--adversarial`): assign positions randomly across available agents — 3 agents get FOR / AGAINST / THIRD ALTERNATIVE, 2 agents get FOR / AGAINST. Then: `You have been assigned a position: [POSITION]. Argue this position as strongly as possible, even if you personally disagree. Find the strongest possible case for this side.`
 
 ## Execution
 
-### Quick mode (1 round)
+Dispatch all agents for a round **in parallel**, wait for the round to complete, then start the next. Capture outputs as `{agent}_r{N}`. When the host is Codex it argues inline, so it is not parallel with itself: background the peer calls first, then write your own argument while they run.
 
-**Step 1 — All agents argue in parallel:**
+After Round 1 in Standard mode, show a one-line summary per agent. **Convergence check:** if all agents reached the same conclusion, announce it and still run the remaining rounds — agreement on a conclusion is not agreement on reasoning.
 
-Dispatch all available agents simultaneously (single message, multiple tool calls):
-
-**Claude** — Agent tool:
-```
-Agent({
-  description: "Debate: Claude position",
-  prompt: "You are participating in a structured debate as CLAUDE.\n\n{POSITION_INSTRUCTION}\n\nTopic: {topic}\n\n{DEBATE_BRIEF}\n\n{RULES}\n\nWord limit: {OPENING_LIMIT} words."
-})
-```
-
-**Codex** — write prompt file, call codex-companion:
-```bash
-cat > /tmp/debate-codex.txt << 'PROMPT'
-You are participating in a structured debate as CODEX.
-
-{POSITION_INSTRUCTION}
-
-Topic: {topic}
-
-{DEBATE_BRIEF}
-
-{RULES}
-
-Word limit: {OPENING_LIMIT} words.
-PROMPT
-
-node "${CODEX_ROOT}/scripts/codex-companion.mjs" task --prompt-file /tmp/debate-codex.txt --effort medium
-```
-
-**AGY** — headless CLI:
-```bash
-agy --print-timeout 10m -p "You are participating in a structured debate as AGY.
-
-{POSITION_INSTRUCTION}
-
-Topic: {topic}
-
-{DEBATE_BRIEF}
-
-{RULES}
-
-Word limit: {OPENING_LIMIT} words."
-```
-
-Capture outputs as `claude_r1`, `codex_r1`, `agy_r1`.
-
-**Step 2 — Synthesize** (see Synthesis section).
-
-### Standard mode (3 rounds)
-
-**Round 1 — Opening positions (parallel):**
-
-Same as Quick mode Step 1. Dispatch all agents in parallel with opening prompts.
-
-After Round 1, display a brief update: `"Round 1 complete. Positions: Claude — {one-line summary}, Codex — {one-line summary}, AGY — {one-line summary}"`
-
-**Convergence check:** If all agents reached the same core conclusion in Round 1, announce: `"All agents converged on: {conclusion}. Proceeding to rebuttals to stress-test the agreement."` Do NOT skip rounds — convergence on conclusion doesn't mean convergence on reasoning.
-
-**Round 2 — Rebuttals (parallel):**
-
-Each agent receives all opponents' Round 1 arguments and responds.
-
-**Claude:**
-```
-Agent({
-  description: "Debate round 2: Claude rebuttal",
-  prompt: "You are in round 2 of a structured debate as CLAUDE.\n\nTopic: {topic}\n\n{DEBATE_BRIEF}\n\nYour Round 1 position:\n{claude_r1}\n\nOpponent positions:\nCODEX said: {codex_r1}\nAGY said: {agy_r1}\n\nRespond to the strongest opposing argument. Concede only what you must. Strengthen your remaining points. Identify where you converge or diverge.\n\n{RULES}\n\nWord limit: {REBUTTAL_LIMIT} words."
-})
-```
-
-**Codex:**
-```bash
-cat > /tmp/debate-codex-r2.txt << 'PROMPT'
-You are in round 2 of a structured debate as CODEX.
-
-Topic: {topic}
-
-{DEBATE_BRIEF}
-
-Your Round 1 position:
-{codex_r1}
-
-Opponent positions:
-CLAUDE said: {claude_r1}
-AGY said: {agy_r1}
-
-Respond to the strongest opposing argument. Concede only what you must. Strengthen your remaining points. Identify where you converge or diverge.
-
-{RULES}
-
-Word limit: {REBUTTAL_LIMIT} words.
-PROMPT
-
-node "${CODEX_ROOT}/scripts/codex-companion.mjs" task --prompt-file /tmp/debate-codex-r2.txt --effort medium
-```
-
-**AGY:**
-```bash
-agy --print-timeout 10m -p "You are in round 2 of a structured debate as AGY.
-
-Topic: {topic}
-
-{DEBATE_BRIEF}
-
-Your Round 1 position:
-{agy_r1}
-
-Opponent positions:
-CLAUDE said: {claude_r1}
-CODEX said: {codex_r1}
-
-Respond to the strongest opposing argument. Concede only what you must. Strengthen your remaining points. Identify where you converge or diverge.
-
-{RULES}
-
-Word limit: {REBUTTAL_LIMIT} words."
-```
-
-Capture outputs as `claude_r2`, `codex_r2`, `agy_r2`.
-
-**Round 3 — Closing arguments (parallel):**
-
-Each agent sees all Round 2 rebuttals and writes their final position.
-
-**Claude:**
-```
-Agent({
-  description: "Debate round 3: Claude closing",
-  prompt: "You are in the final round of a structured debate as CLAUDE.\n\nTopic: {topic}\n\n{DEBATE_BRIEF}\n\nYour Round 2 rebuttal:\n{claude_r2}\n\nAll Round 2 rebuttals:\nCODEX said: {codex_r2}\nAGY said: {agy_r2}\n\nThis is the final round. State your final position on the topic. Acknowledge valid points your opponents made. Identify the key remaining disagreement. What should the user actually do?\n\n{RULES}\n\nWord limit: {CLOSING_LIMIT} words."
-})
-```
-
-**Codex:**
-```bash
-cat > /tmp/debate-codex-r3.txt << 'PROMPT'
-You are in the final round of a structured debate as CODEX.
-
-Topic: {topic}
-
-{DEBATE_BRIEF}
-
-Your Round 2 rebuttal:
-{codex_r2}
-
-All Round 2 rebuttals:
-CLAUDE said: {claude_r2}
-AGY said: {agy_r2}
-
-This is the final round. State your final position on the topic. Acknowledge valid points your opponents made. Identify the key remaining disagreement. What should the user actually do?
-
-{RULES}
-
-Word limit: {CLOSING_LIMIT} words.
-PROMPT
-
-node "${CODEX_ROOT}/scripts/codex-companion.mjs" task --prompt-file /tmp/debate-codex-r3.txt --effort medium
-```
-
-**AGY:**
-```bash
-agy --print-timeout 10m -p "You are in the final round of a structured debate as AGY.
-
-Topic: {topic}
-
-{DEBATE_BRIEF}
-
-Your Round 2 rebuttal:
-{agy_r2}
-
-All Round 2 rebuttals:
-CLAUDE said: {claude_r2}
-CODEX said: {codex_r2}
-
-This is the final round. State your final position on the topic. Acknowledge valid points your opponents made. Identify the key remaining disagreement. What should the user actually do?
-
-{RULES}
-
-Word limit: {CLOSING_LIMIT} words."
-```
-
-Capture outputs as `claude_r3`, `codex_r3`, `agy_r3`.
+Re-inject the topic every round to prevent drift. If an agent fails mid-debate, continue with the rest and note the failure. Clean up `/tmp/debate-*` afterwards.
 
 ## Synthesis
 
-After all rounds complete, YOU (the orchestrator) produce the final synthesis. Do not dispatch a subagent — you have all the context.
-
-Read through all rounds and write:
-
-### Quick mode output
+The host produces the synthesis directly — do not dispatch a subagent, you already have every round. When the host also debated, treat your own argument with exactly the same scrutiny as the others.
 
 ```markdown
 ## Debate: {topic}
 
-**Agents:** {list} | **Mode:** Quick (1 round)
-
-### Positions
-**Claude:** {2-3 sentence summary}
-**Codex:** {2-3 sentence summary}
-**AGY:** {2-3 sentence summary}
-
-### Verdict
-**Consensus:** {bullet points where agents agreed}
-**Divergence:** {bullet points of disagreement}
-**Recommendation:** {your synthesis — what should the user do}
-**Verify:** {concrete things to check before acting}
-```
-
-### Standard mode output
-
-```markdown
-## Debate: {topic}
-
-**Agents:** {list} | **Mode:** Standard (3 rounds)
+**Agents:** {list} | **Mode:** {Quick (1 round) | Standard (3 rounds)}
 
 ### Positions (Round 1)
-**Claude:** {2-3 sentence summary}
-**Codex:** {2-3 sentence summary}
-**AGY:** {2-3 sentence summary}
+**{Agent}:** {2-3 sentence summary}   ← one line per agent
 
-### Key exchanges
-- {most interesting point of disagreement and how it evolved}
+### Key exchanges                      ← Standard mode only
+- {sharpest point of disagreement and how it evolved}
 - {strongest concession made by any agent}
 - {argument that shifted or strengthened across rounds}
 
-### Final positions (Round 3)
-**Claude:** {1-2 sentence final stance}
-**Codex:** {1-2 sentence final stance}
-**AGY:** {1-2 sentence final stance}
+### Final positions (Round 3)          ← Standard mode only
+**{Agent}:** {1-2 sentence final stance}
 
 ### Verdict
-**Consensus:** {bullet points where agents converged}
+**Consensus:** {where agents agreed}
 **Divergence:** {remaining disagreements}
-**Recommendation:** {your synthesis — what should the user do, weighing all perspectives}
-**Verify:** {concrete things to check before acting on this recommendation}
+**Recommendation:** {your synthesis — what the user should actually do}
+**Verify:** {concrete things to check before acting}
 ```
 
 ## Rules
 
-- Do NOT take a side during rounds — let each agent argue independently
-- Do NOT edit the agents' outputs — present them faithfully in the synthesis
-- Do NOT use `--write` on Codex calls — this is read-only argumentation
-- Re-inject the topic in every round's prompt to prevent drift
-- If an agent fails mid-debate (timeout, error), continue with remaining agents and note the failure
-- Clean up `/tmp/debate-codex*` files after completion (AGY prompts are passed inline, no temp files)
+- Do NOT take a side during the rounds — let each agent argue independently.
+- Do NOT edit the agents' outputs — represent them faithfully.
+- Read-only: no `--write` on Codex calls.
+- If AGY returns a 503 or error mid-debate, drop it for the remaining rounds and continue. No retry.
 
 ## Fallback cascade
 
-Automatic, no user prompt needed:
+Automatic, no prompt needed.
 
-**3 agents available** → normal three-way debate.
-
-**2 agents available** → two-way debate. Announce which agent is missing. Adjust prompts to reference one opponent instead of two. Adversarial mode uses FOR/AGAINST only (no third alternative).
-
-**1 agent (only Claude)** → Claude-vs-Claude. Dispatch two Claude subagents:
-- Agent A: `"You are a SKEPTIC. You believe this approach will fail. Find every flaw, risk, and hidden assumption. Argue against it forcefully."`
-- Agent B: `"You are an ADVOCATE. You believe this is the right approach. Defend it with specific evidence and address likely objections."`
-
-**AGY-specific handling:** If AGY returns a 503 or error during a round, log it and continue without AGY for remaining rounds. Do not retry — the debate doesn't need to block on transient API issues.
+- **3 agents** → three-way debate.
+- **2 agents** → two-way. Announce who is missing, reference one opponent instead of two, and use FOR/AGAINST only in adversarial mode.
+- **1 agent (host only)** → self-debate with two opposing personas:
+  - **SKEPTIC**: "You believe this approach will fail. Find every flaw, risk, and hidden assumption. Argue against it forcefully."
+  - **ADVOCATE**: "You believe this is the right approach. Defend it with specific evidence and address likely objections."
+  Under Claude Code, run these as two separate subagents. Under Codex, argue each persona in turn before synthesizing.
