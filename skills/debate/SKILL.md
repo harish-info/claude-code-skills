@@ -14,11 +14,11 @@ Up to three independent agents argue a topic, respond to each other, then the ho
 Take the arguments from whichever form the host used: Claude Code expands
 `$ARGUMENTS` from `/debate <topic>`; Codex invokes the skill as `$debate <topic>`
 and substitutes nothing, so read the topic from the request that triggered the
-skill. Never treat a literal `$ARGUMENTS` as the topic — that means the host did
+skill. Never treat a literal `$ARGUMENTS` as the topic; that means the host did
 not expand it.
 
-- `--adversarial` — assign explicit for/against/alternative positions instead of exploratory
-- `--rounds N` — round count (1-5), skips the mode prompt. 1 = Quick, 3 = Standard, other values use the Standard flow with an adjusted round count
+- `--adversarial`: assign explicit for/against/alternative positions instead of exploratory
+- `--rounds N`: round count (1-5), skips the mode prompt. 1 = Quick, 3 = Standard, other values use the Standard flow with an adjusted round count
 - Everything else is the topic
 
 If no topic is given, ask what to debate.
@@ -37,7 +37,7 @@ Shell state does not survive between tool calls: re-run these lines at the top o
 every later snippet that uses a `firefly_*` wrapper. Host-native subagents do
 not use these shell wrappers; Claude and Codex each use their installed host.
 
-The roster is optimistic — it checks that each agent is installed, not that it
+The roster is optimistic: it checks that each agent is installed, not that it
 answers. An agent named here can still fail at dispatch; drop it to unavailable
 and re-check the agent count before Round 1 rather than assuming the announced
 roster holds.
@@ -56,7 +56,7 @@ Strip `CLAUDECODE` when launching Codex: Claude Code exports it, children inheri
 it, and a Codex peer that sees it resolves its own host as Claude.
 
 Write every peer's prompt to its own file first, with a **quoted** heredoc
-delimiter. Debate prompts embed the user's topic and the brief — backticks, `$`,
+delimiter. Debate prompts embed the user's topic and the brief; backticks, `$`,
 and code snippets are routine. An unquoted delimiter runs command substitution as
 the file is written; a prompt typed onto the command line runs it at dispatch:
 
@@ -70,15 +70,15 @@ One file per agent per round, so a later round never clobbers a file still being
 read. Clean them up after the synthesis.
 
 This is read-only argumentation: pass `--sandbox read-only` to `codex exec` and
-never `--write`. Never pass `--sandbox`/`--dangerously-skip-permissions` to AGY —
+never `--write`. Never pass `--sandbox`/`--dangerously-skip-permissions` to AGY;
 both break its `--print-timeout` and it hangs forever.
 
 ## Mode selection
 
 If `--rounds N` was passed, use N rounds. Otherwise ask (`AskUserQuestion` under Claude Code, a plain numbered question under Codex):
 
-1. **Quick (1 round)** — all agents argue once, immediate synthesis. Good for simple topics or fast signal.
-2. **Standard (3 rounds)** — opening, rebuttals, closing, then synthesis. Better for complex or high-stakes topics.
+1. **Quick (1 round)**: all agents argue once, immediate synthesis. Good for simple topics or fast signal.
+2. **Standard (3 rounds)**: opening, rebuttals, closing, then synthesis. Better for complex or high-stakes topics.
 
 ## Context gathering
 
@@ -89,7 +89,7 @@ Build a **debate brief** that every agent receives, so all start from the same b
 | "branch", "changes", "diff", "PR", "commit" | Branch name, `git log main..HEAD --oneline`, `git diff main..HEAD --stat`, key file diffs. Summarize intent in 1-2 sentences. | 800 diff lines |
 | "plan", "spec", "design", or a `.md` path | Read the document; extract key decisions, constraints, open questions. | 1000 words |
 | Specific files, functions, or modules | Read them; summarize surrounding architecture in 2-3 sentences plus relevant snippets. | 500 code lines |
-| None of the above | Use the topic text as-is. If it clearly relates to the current repo, name a few relevant paths with a one-line summary — do not dump file contents. | — |
+| None of the above | Use the topic text as-is. If it clearly relates to the current repo, name a few relevant paths with a one-line summary; do not dump file contents. | n/a |
 
 Store this as `DEBATE_BRIEF` and inject it into every prompt.
 
@@ -110,7 +110,7 @@ Topic: {topic}
 
 RULES:
 - Start with your thesis in the first sentence. No preamble.
-- Cite specific evidence from the context — files, decisions, constraints, code.
+- Cite specific evidence from the context: files, decisions, constraints, code.
 - Do not concede unless you genuinely cannot counter the argument.
 - Reference concrete details, not abstract principles.
 - No conversational filler ("great question", "I appreciate", "my colleague").
@@ -122,9 +122,9 @@ Word limit: {LIMIT} words.
 
 | Round | Block |
 |-------|-------|
-| 1 — Opening | *(empty)* |
-| 2 — Rebuttal | `Your Round 1 position:`<br>`{own_r1}`<br><br>`Opponent positions:`<br>`{each opponent}: {their_r1}`<br><br>`Respond to the strongest opposing argument. Concede only what you must. Strengthen your remaining points. Identify where you converge or diverge.` |
-| 3 — Closing | `Your Round 2 rebuttal:`<br>`{own_r2}`<br><br>`All Round 2 rebuttals:`<br>`{each opponent}: {their_r2}`<br><br>`This is the final round. State your final position. Acknowledge valid points your opponents made. Identify the key remaining disagreement. What should the user actually do?` |
+| 1: Opening | *(empty)* |
+| 2: Rebuttal | `Your Round 1 position:`<br>`{own_r1}`<br><br>`Opponent positions:`<br>`{each opponent}: {their_r1}`<br><br>`Respond to the strongest opposing argument. Concede only what you must. Strengthen your remaining points. Identify where you converge or diverge.` |
+| 3: Closing | `Your Round 2 rebuttal:`<br>`{own_r2}`<br><br>`All Round 2 rebuttals:`<br>`{each opponent}: {their_r2}`<br><br>`This is the final round. State your final position. Acknowledge valid points your opponents made. Identify the key remaining disagreement. What should the user actually do?` |
 
 ### `{LIMIT}` per round
 
@@ -135,21 +135,21 @@ Word limit: {LIMIT} words.
 
 ### `{POSITION_INSTRUCTION}`
 
-**Exploratory** (default): `Take your honest position on this topic. Do not hedge or try to be balanced — that is the synthesizer's job.`
+**Exploratory** (default): `Take your honest position on this topic. Do not hedge or try to be balanced; that is the synthesizer's job.`
 
-**Adversarial** (`--adversarial`): assign positions randomly across available agents — 3 agents get FOR / AGAINST / THIRD ALTERNATIVE, 2 agents get FOR / AGAINST. Then: `You have been assigned a position: [POSITION]. Argue this position as strongly as possible, even if you personally disagree. Find the strongest possible case for this side.`
+**Adversarial** (`--adversarial`): assign positions randomly across available agents: 3 agents get FOR / AGAINST / THIRD ALTERNATIVE, 2 agents get FOR / AGAINST. Then: `You have been assigned a position: [POSITION]. Argue this position as strongly as possible, even if you personally disagree. Find the strongest possible case for this side.`
 
 ## Execution
 
 Dispatch all agents for a round **in parallel**, wait for the round to complete, then start the next. Capture outputs as `{agent}_r{N}`. When the host is Codex it argues inline, so it is not parallel with itself: background the peer calls first, then write your own argument while they run.
 
-After Round 1 in Standard mode, show a one-line summary per agent. **Convergence check:** if all agents reached the same conclusion, announce it and still run the remaining rounds — agreement on a conclusion is not agreement on reasoning.
+After Round 1 in Standard mode, show a one-line summary per agent. **Convergence check:** if all agents reached the same conclusion, announce it and still run the remaining rounds; agreement on a conclusion is not agreement on reasoning.
 
 Re-inject the topic every round to prevent drift. If an agent fails mid-debate, continue with the rest and note the failure. Clean up `/tmp/debate-*` afterwards.
 
 ## Synthesis
 
-The host produces the synthesis directly — do not dispatch a subagent, you already have every round. When the host also debated, treat your own argument with exactly the same scrutiny as the others.
+The host produces the synthesis directly; do not dispatch a subagent, you already have every round. When the host also debated, treat your own argument with exactly the same scrutiny as the others.
 
 ```markdown
 ## Debate: {topic}
@@ -170,14 +170,14 @@ The host produces the synthesis directly — do not dispatch a subagent, you alr
 ### Verdict
 **Consensus:** {where agents agreed}
 **Divergence:** {remaining disagreements}
-**Recommendation:** {your synthesis — what the user should actually do}
+**Recommendation:** {your synthesis: what the user should actually do}
 **Verify:** {concrete things to check before acting}
 ```
 
 ## Rules
 
-- Do NOT take a side during the rounds — let each agent argue independently.
-- Do NOT edit the agents' outputs — represent them faithfully.
+- Do NOT take a side during the rounds; let each agent argue independently.
+- Do NOT edit the agents' outputs; represent them faithfully.
 - Read-only: no `--write` on Codex calls.
 - If AGY returns a 503 or error mid-debate, drop it for the remaining rounds and continue. No retry.
 

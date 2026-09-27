@@ -125,11 +125,11 @@ Return one report:
 
 | # | Finding | Codex | Claude | AGY | Verdict | Severity | Action |
 |---|---------|:-----:|:------:|:---:|---------|----------|--------|
-| 1 | Short description | Bug | Bug | — | Accepted | Bug | Concrete fix |
+| 1 | Short description | Bug | Bug | n/a | Accepted | Bug | Concrete fix |
 
 ### Accepted findings
 
-**#1 — Title** (`path:line`)
+**#1: Title** (`path:line`)
 Evidence, impact, and correction. Raised by: agents.
 
 ### Verdict
