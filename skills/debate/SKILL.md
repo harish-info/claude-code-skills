@@ -1,8 +1,7 @@
 ---
 name: debate
-description: Runs a multi-round structured debate between Claude, Codex, and AGY on a technical question, then synthesizes a verdict. Use to explore tradeoffs, compare approaches, stress-test a decision, or get adversarial perspectives. Invoke as /debate <topic> under Claude Code or $debate <topic> under Codex.
-user_invocable: true
-tools: Bash, Read, Write, Agent, AskUserQuestion
+description: Runs a multi-round structured debate between Claude, Codex, and AGY on a technical question, then synthesizes a verdict. Use when the user asks for a debate, a multi-model stress test of a decision, or adversarial perspectives from other models; answer ordinary trade-off questions directly. Invoke as /debate <topic> under Claude Code or $debate <topic> under Codex.
+allowed-tools: Bash, Read, Write, Agent
 ---
 
 # Debate
@@ -75,7 +74,7 @@ both break its `--print-timeout` and it hangs forever.
 
 ## Mode selection
 
-If `--rounds N` was passed, use N rounds. Otherwise ask (`AskUserQuestion` under Claude Code, a plain numbered question under Codex):
+If `--rounds N` was passed, use N rounds. Otherwise use Standard and say so; ask only if the operator is present and wants to choose (`AskUserQuestion` under Claude Code, a plain numbered question under Codex):
 
 1. **Quick (1 round)**: all agents argue once, immediate synthesis. Good for simple topics or fast signal.
 2. **Standard (3 rounds)**: opening, rebuttals, closing, then synthesis. Better for complex or high-stakes topics.

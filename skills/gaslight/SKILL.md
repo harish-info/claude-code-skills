@@ -1,7 +1,7 @@
 ---
 name: gaslight
 description: Force a hard adversarial re-check of work you just finished. Use when a feature/fix likely stopped at "good enough" -- flips the agent from generation into verification mode to surface real bugs the first pass missed.
-tools: Read, Edit, Bash, Glob, Grep
+allowed-tools: Read, Edit, Bash, Glob, Grep
 ---
 
 # Gaslight

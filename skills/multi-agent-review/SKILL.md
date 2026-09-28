@@ -1,8 +1,7 @@
 ---
 name: multi-agent-review
-description: Runs a read-only review of the current branch across available Claude, Codex, and AGY reviewers, then adjudicates findings into one verdict. Use whenever the user says "review code", "code review", "multi-agent review", "multi agent review", "review my changes", "review this branch" or "review this PR", or wants a multi-model review or a second opinion before shipping.
-user_invocable: true
-tools: Bash, Read, Grep, Agent, AskUserQuestion
+description: Runs a read-only review of the current branch across available Claude, Codex, and AGY reviewers, then adjudicates findings into one verdict. Use only when the user asks for a multi-agent, multi-model or cross-harness review ("multi-agent review", "review with Codex and AGY", "second opinion from another model"). Plain "review my code" requests go to the built-in review skills.
+allowed-tools: Bash, Read, Grep, Agent
 ---
 
 # Multi-Agent Review
@@ -40,7 +39,7 @@ Roles:
 - Other Claude/Codex peer: Senior Developer; bugs and error handling.
 - AGY: Staff Engineer; architecture and hidden complexity.
 
-If no mode flag was supplied, ask for Standard or Challenge before dispatching.
+If no mode flag was supplied, use Standard and say so in the report.
 
 ## 2. Verify the review target
 
@@ -143,6 +142,8 @@ Evidence, impact, and correction. Raised by: agents.
 ```
 
 The skill ends after the report. It never applies fixes, posts comments, or speaks externally.
+
+If the operator asks for PR comment drafts from accepted findings, follow [PR comment style](references/pr-comment-style.md).
 
 ## Tech Lead rules
 

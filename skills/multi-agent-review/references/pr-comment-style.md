@@ -1,0 +1,21 @@
+# PR Comment Style
+
+- Keep each comment to one short, natural-sounding line.
+- Raise one concrete, actionable issue or question per comment.
+- Vary sentence structure based on context; do not repeatedly use the same opener.
+- Use conversational phrasing such as:
+  - “Would it make sense to…?”
+  - “Is it possible to…?”
+  - “What about…?”
+  - “Could we consider…?”
+  - “Do we need to…?”
+  - “Is there a reason…?”
+  - “How does this behave when…?”
+  - “What happens if…?”
+  - “Would it be safer to…?”
+  - “Was this intentional?”
+- Treat these as examples, not fixed templates. Do not mechanically cycle through them.
+- Prefer direct statements when a question would sound forced.
+- Post only actionable findings; omit formatting noise and low-value observations.
+- Respect deliberate implementation choices and removals.
+- Keep the review non-blocking unless a confirmed issue must block merging.
